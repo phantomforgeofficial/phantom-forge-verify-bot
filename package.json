@@ -1,11 +1,9 @@
 {
-  "name": "presence-watch-bot",
-  "version": "1.0.0",
+  "name": "phantom-forge-verify-status",
+  "version": "1.1.1",
   "type": "module",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
+  "scripts": { "start": "node index.js" },
   "dependencies": {
     "discord.js": "^14.16.3",
     "express": "^4.19.2"
