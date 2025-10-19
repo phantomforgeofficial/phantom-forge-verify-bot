@@ -16,6 +16,9 @@ const STATUS_CHANNEL_ID = process.env.STATUS_CHANNEL_ID || "1429121620194234478"
 const UPDATE_INTERVAL_MS = Number(process.env.UPDATE_INTERVAL_MS ?? 1000);
 const PORT = process.env.PORT || 3000;
 
+// link naar je bot-logo (pas aan indien andere)
+const BOT_LOGO_URL = process.env.BOT_LOGO_URL || "https://i.postimg.cc/5yNrQYcn/phantom-verify.png";
+
 if (!token) throw new Error("❌ DISCORD_TOKEN ontbreekt in .env");
 
 const client = new Client({
@@ -95,7 +98,7 @@ function buildStatusEmbed() {
   });
 
   return new EmbedBuilder()
-    .setTitle("🕓 Phantom Forge Verify Bot Status") // ✅ juiste klok-emoji
+    .setTitle("🕓 Phantom Forge Verify Bot Status")
     .setColor(0x6c2bd9)
     .setDescription("**Active:**\n✅ Online")
     .addFields(
@@ -103,6 +106,7 @@ function buildStatusEmbed() {
       { name: "Ping", value: `${Math.round(client.ws.ping)} ms`, inline: true },
       { name: "Last update", value: dateTime, inline: false }
     )
+    .setThumbnail(BOT_LOGO_URL) // 👈 logo linksonder
     .setFooter({
       text: `Live updated every second | Phantom Forge • vandaag om ${footerTime}`,
     });
@@ -119,13 +123,11 @@ async function updateOrCreateStatusMessage() {
       return;
     }
 
-    // bestaand ID inlezen
     if (!statusMessageId) {
       const data = await readData();
       statusMessageId = data.statusMessageId || null;
     }
 
-    // probeer te bewerken
     if (statusMessageId) {
       try {
         const msg = await channel.messages.fetch(statusMessageId);
@@ -137,7 +139,6 @@ async function updateOrCreateStatusMessage() {
       }
     }
 
-    // maak één nieuw bericht
     const sent = await channel.send({ embeds: [buildStatusEmbed()] });
     statusMessageId = sent.id;
     await writeData({ statusMessageId });
@@ -182,4 +183,6 @@ app.get("/health", (_req, res) =>
     ping: Math.round(client.ws.ping),
   })
 );
+app.listen(PORT, () => console.log(`🌐 Webserver luistert op port ${PORT} → /health`));
+
 app.listen(PORT, () => console.log(`🌐 Webserver luistert op port ${PORT} → /health`));
