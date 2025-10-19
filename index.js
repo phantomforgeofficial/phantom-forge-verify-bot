@@ -11,13 +11,10 @@ import {
 } from "discord.js";
 
 const token = process.env.DISCORD_TOKEN;
-const TARGET_GUILD_ID = process.env.GUILD_ID;
 const STATUS_CHANNEL_ID = process.env.STATUS_CHANNEL_ID || "1429121620194234478";
+const BOT_LOGO_URL = process.env.BOT_LOGO_URL || "https://i.postimg.cc/5yNrQYcn/phantom-verify.png";
 const UPDATE_INTERVAL_MS = Number(process.env.UPDATE_INTERVAL_MS ?? 1000);
 const PORT = process.env.PORT || 3000;
-
-// link naar je bot-logo (pas aan indien andere)
-const BOT_LOGO_URL = process.env.BOT_LOGO_URL || "https://i.postimg.cc/5yNrQYcn/phantom-verify.png";
 
 if (!token) throw new Error("❌ DISCORD_TOKEN ontbreekt in .env");
 
@@ -27,25 +24,22 @@ const client = new Client({
 });
 
 const DATA_FILE = path.resolve(process.cwd(), "data.json");
+
 let startedAt = Date.now();
 let statusMessageId = null;
-let isUpdating = false;
+let updating = false;
 
-/* ------------------ helpers ------------------ */
+/* ------------------ Helpers ------------------ */
 async function readData() {
   try {
-    const data = await fs.readFile(DATA_FILE, "utf8");
-    return JSON.parse(data);
+    const txt = await fs.readFile(DATA_FILE, "utf8");
+    return JSON.parse(txt);
   } catch {
     return {};
   }
 }
-async function writeData(obj) {
-  try {
-    await fs.writeFile(DATA_FILE, JSON.stringify(obj, null, 2), "utf8");
-  } catch (e) {
-    console.warn("Kon data.json niet opslaan:", e.message);
-  }
+async function writeData(data) {
+  await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2), "utf8");
 }
 
 function fmtUptime(ms) {
@@ -56,42 +50,17 @@ function fmtUptime(ms) {
   return `${h}:${m}:${sec}`;
 }
 
-async function resolveGuildName() {
-  try {
-    if (TARGET_GUILD_ID) {
-      const g = await client.guilds.fetch(TARGET_GUILD_ID);
-      return g?.name ?? "this server";
-    }
-    let g = client.guilds.cache.first();
-    if (!g) g = (await client.guilds.fetch()).first();
-    return g?.name ?? "this server";
-  } catch {
-    return "this server";
-  }
-}
-
-async function setWatchingPresence() {
-  const name = await resolveGuildName();
-  await client.user.setPresence({
-    status: "online",
-    activities: [{ name, type: ActivityType.Watching }],
-  });
-  console.log(`✅ Presence ingesteld: Watching ${name}`);
-}
-
-/* ------------------ embed ------------------ */
+/* ------------------ Embed ------------------ */
 function buildStatusEmbed() {
   const now = new Date();
-
   const dateTime = now.toLocaleString("nl-NL", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
     year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
   });
-
   const footerTime = now.toLocaleTimeString("nl-NL", {
     hour: "2-digit",
     minute: "2-digit",
@@ -112,57 +81,62 @@ function buildStatusEmbed() {
     });
 }
 
-/* ------------------ update/create logic ------------------ */
-async function updateOrCreateStatusMessage() {
-  if (isUpdating) return;
-  isUpdating = true;
+/* ------------------ Update Logic ------------------ */
+async function updateStatus() {
+  if (updating) return;
+  updating = true;
   try {
     const channel = await client.channels.fetch(STATUS_CHANNEL_ID);
-    if (!channel?.isTextBased()) {
-      console.error("❌ STATUS_CHANNEL_ID is geen tekstkanaal of niet gevonden.");
-      return;
-    }
+    if (!channel?.isTextBased()) return console.error("❌ Kanaal niet geldig");
 
     if (!statusMessageId) {
       const data = await readData();
       statusMessageId = data.statusMessageId || null;
     }
 
+    // Probeer bestaand bericht te bewerken
     if (statusMessageId) {
       try {
         const msg = await channel.messages.fetch(statusMessageId);
         await msg.edit({ embeds: [buildStatusEmbed()] });
+        updating = false;
         return;
       } catch {
-        console.warn("⚠️ Oud bericht niet gevonden, maak nieuw aan...");
+        console.warn("⚠️ Bericht niet gevonden — nieuw bericht aanmaken");
         statusMessageId = null;
       }
     }
 
+    // Nieuw bericht als er nog geen bestaat
     const sent = await channel.send({ embeds: [buildStatusEmbed()] });
     statusMessageId = sent.id;
     await writeData({ statusMessageId });
-    console.log(`💾 Nieuw statusbericht geplaatst (ID: ${statusMessageId})`);
+    console.log(`💾 Nieuw statusbericht gemaakt (ID: ${statusMessageId})`);
   } catch (err) {
-    console.error("⚠️ updateOrCreateStatusMessage fout:", err.message);
+    console.error("Fout bij update:", err.message);
   } finally {
-    isUpdating = false;
+    updating = false;
   }
 }
 
-/* ------------------ bot setup ------------------ */
+/* ------------------ Bot Setup ------------------ */
 let interval = null;
+
 client.once(Events.ClientReady, async () => {
   console.log(`🤖 Ingelogd als ${client.user.tag}`);
   startedAt = Date.now();
-  await setWatchingPresence();
 
-  await updateOrCreateStatusMessage();
-  interval = setInterval(updateOrCreateStatusMessage, UPDATE_INTERVAL_MS);
+  // Presence
+  const firstGuild = client.guilds.cache.first() || (await client.guilds.fetch()).first();
+  const guildName = firstGuild?.name ?? "this server";
+  client.user.setPresence({
+    status: "online",
+    activities: [{ name: guildName, type: ActivityType.Watching }],
+  });
+
+  await updateStatus();
+  interval = setInterval(updateStatus, UPDATE_INTERVAL_MS);
 });
-
-client.on(Events.GuildCreate, setWatchingPresence);
-client.on(Events.GuildDelete, setWatchingPresence);
 
 process.on("SIGTERM", () => {
   if (interval) clearInterval(interval);
@@ -173,7 +147,7 @@ process.on("uncaughtException", console.error);
 
 client.login(token);
 
-/* ------------------ webserver voor Render ------------------ */
+/* ------------------ Render Webserver ------------------ */
 const app = express();
 app.get("/", (_req, res) => res.status(200).send("Verify Status Bot is running."));
 app.get("/health", (_req, res) =>
@@ -183,6 +157,4 @@ app.get("/health", (_req, res) =>
     ping: Math.round(client.ws.ping),
   })
 );
-app.listen(PORT, () => console.log(`🌐 Webserver luistert op port ${PORT} → /health`));
-
 app.listen(PORT, () => console.log(`🌐 Webserver luistert op port ${PORT} → /health`));
