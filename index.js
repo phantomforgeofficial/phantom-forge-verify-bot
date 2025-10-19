@@ -1,16 +1,12 @@
 import express from "express";
 import {
-  Client,
-  GatewayIntentBits,
-  Partials,
-  ActivityType,
-  Events,
-  EmbedBuilder,
+  Client, GatewayIntentBits, Partials,
+  ActivityType, Events, EmbedBuilder
 } from "discord.js";
 
 const token = process.env.DISCORD_TOKEN;
 const STATUS_CHANNEL_ID = process.env.STATUS_CHANNEL_ID || "1429121620194234478";
-const BOT_LOGO_URL = process.env.BOT_LOGO_URL || "https://i.postimg.cc/5yNrQYcn/phantom-verify.png";
+const BOT_LOGO_URL = process.env.BOT_LOGO_URL || ""; // bv. https://.../logo.png
 const UPDATE_INTERVAL_MS = Number(process.env.UPDATE_INTERVAL_MS ?? 1000);
 const PORT = process.env.PORT || 3000;
 
@@ -25,23 +21,20 @@ let startedAt = Date.now();
 let statusMessageId = null;
 let updating = false;
 
-function fmtUptime(ms) {
+// --- helpers ---
+const fmtUptime = (ms) => {
   const s = Math.floor(ms / 1000);
   const h = String(Math.floor(s / 3600)).padStart(2, "0");
   const m = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
   const sec = String(s % 60).padStart(2, "0");
   return `${h}:${m}:${sec}`;
-}
+};
 
 function buildStatusEmbed() {
   const now = new Date();
   const dateTime = now.toLocaleString("nl-NL", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
   });
   const footerTime = now.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
 
@@ -54,51 +47,59 @@ function buildStatusEmbed() {
       { name: "Ping", value: `${Math.round(client.ws.ping)} ms`, inline: true },
       { name: "Last update", value: dateTime, inline: false }
     )
-    .setThumbnail(BOT_LOGO_URL)
-    .setFooter({ text: `Live updated every second | Phantom Forge • vandaag om ${footerTime}` });
+    .setFooter({
+      text: `Live updated every second | Phantom Forge • vandaag om ${footerTime}`,
+      iconURL: BOT_LOGO_URL || client.user.displayAvatarURL(), // 👈 logo linksonder
+    });
 }
 
-/** Zoek bestaand statusbericht van deze bot in dit kanaal */
+// Zoekt bestaand bericht van deze bot met de juiste titel (ook in pins)
 async function findExistingStatusMessage(channel) {
-  // Vereist: Read Message History
+  // Eerst pins (betrouwbaar, weinig)
+  try {
+    const pins = await channel.messages.fetchPinned();
+    const pinned = pins.find(m => m.author?.id === client.user.id &&
+      m.embeds?.[0]?.title === "🕓 Phantom Forge Verify Bot Status");
+    if (pinned) return pinned.id;
+  } catch {}
+  // Dan recente history (vereist: Read Message History)
   const msgs = await channel.messages.fetch({ limit: 100 });
-  const mine = msgs.find(
-    (m) => m.author?.id === client.user.id && m.embeds?.[0]?.title === "🕓 Phantom Forge Verify Bot Status"
+  const mine = msgs.find(m =>
+    m.author?.id === client.user.id &&
+    m.embeds?.[0]?.title === "🕓 Phantom Forge Verify Bot Status"
   );
   return mine?.id || null;
 }
 
+// Maakt alleen een nieuw bericht als er écht geen bestaat
 async function ensureStatusMessage(channel) {
-  // 1) Hebben we al een id in memory? Probeer te fetchen
+  // 1) bestaand ID in memory nog geldig?
   if (statusMessageId) {
-    try {
-      await channel.messages.fetch(statusMessageId);
-      return statusMessageId;
-    } catch {
-      statusMessageId = null;
-    }
+    try { await channel.messages.fetch(statusMessageId); return statusMessageId; }
+    catch { statusMessageId = null; }
   }
-  // 2) Probeer te vinden in recente berichten
-  const foundId = await findExistingStatusMessage(channel).catch(() => null);
-  if (foundId) {
-    statusMessageId = foundId;
-    return statusMessageId;
-  }
-  // 3) Maak er één
+  // 2) zoeken
+  const found = await findExistingStatusMessage(channel);
+  if (found) { statusMessageId = found; return statusMessageId; }
+
+  // 3) anti-dubbel guard: check direct vóór sturen nog één keer
+  const recheck = await findExistingStatusMessage(channel);
+  if (recheck) { statusMessageId = recheck; return statusMessageId; }
+
+  // 4) maak één nieuw bericht en pin het (pin = nog betrouwbaarder terugvinden)
   const sent = await channel.send({ embeds: [buildStatusEmbed()] });
+  try { await sent.pin().catch(() => {}); } catch {}
   statusMessageId = sent.id;
   return statusMessageId;
 }
 
 async function updateStatus() {
-  if (updating) return;
+  if (updating) return; // lock
   updating = true;
   try {
     const channel = await client.channels.fetch(STATUS_CHANNEL_ID);
-    if (!channel?.isTextBased()) {
-      console.error("Kanaal niet geldig of geen tekstkanaal");
-      return;
-    }
+    if (!channel?.isTextBased()) return;
+
     const id = await ensureStatusMessage(channel);
     const msg = await channel.messages.fetch(id);
     await msg.edit({ embeds: [buildStatusEmbed()] });
@@ -115,7 +116,7 @@ client.once(Events.ClientReady, async () => {
   console.log(`Ingelogd als ${client.user.tag}`);
   startedAt = Date.now();
 
-  // Presence (watching servernaam)
+  // Presence: watching (server name)
   const g = client.guilds.cache.first() || (await client.guilds.fetch()).first();
   const name = g?.name ?? "this server";
   await client.user.setPresence({ status: "online", activities: [{ name, type: ActivityType.Watching }] });
@@ -130,7 +131,7 @@ process.on("uncaughtException", console.error);
 
 client.login(token);
 
-/* Webserver voor Render */
+// Web service (Render)
 const app = express();
 app.get("/", (_req, res) => res.status(200).send("Verify Status Bot is running."));
 app.get("/health", (_req, res) => res.status(200).json({ ok: true, uptime: process.uptime(), ping: Math.round(client.ws.ping) }));
