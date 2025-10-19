@@ -6,14 +6,12 @@ import {
   ActivityType,
   Events,
   EmbedBuilder,
-  time as discordTime,
-  TimestampStyles,
 } from "discord.js";
 
-/* ---------- ENV ---------- */
 const token = process.env.DISCORD_TOKEN;
-const TARGET_GUILD_ID = process.env.GUILD_ID; // optioneel
+const TARGET_GUILD_ID = process.env.GUILD_ID;
 const STATUS_CHANNEL_ID = process.env.STATUS_CHANNEL_ID || "1429121620194234478";
+const STATUS_MESSAGE_ID = process.env.STATUS_MESSAGE_ID; // <-- vaste message ID
 const UPDATE_INTERVAL_MS = Number(process.env.UPDATE_INTERVAL_MS ?? 1000);
 const PORT = process.env.PORT || 3000;
 
@@ -22,17 +20,17 @@ if (!token) {
   process.exit(1);
 }
 
-/* ---------- Discord Client ---------- */
+if (!STATUS_MESSAGE_ID) {
+  console.error("❌ STATUS_MESSAGE_ID ontbreekt — voeg dit toe in je .env zodat de bot weet welk bericht hij moet bewerken.");
+  process.exit(1);
+}
+
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages, // om berichten te fetchen/bijwerken
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
   partials: [Partials.Channel, Partials.Message],
 });
 
 let startedAt = Date.now();
-let statusMsgId = null;
 
 function fmtUptime(ms) {
   const s = Math.floor(ms / 1000);
@@ -60,73 +58,55 @@ async function resolveGuildName() {
 }
 
 async function setWatchingPresence() {
-  const serverName = await resolveGuildName();
+  const name = await resolveGuildName();
   await client.user.setPresence({
     status: "online",
-    activities: [{ name: serverName, type: ActivityType.Watching }],
+    activities: [{ name, type: ActivityType.Watching }],
   });
-  console.log(`✅ Presence ingesteld: Watching ${serverName}`);
+  console.log(`✅ Presence ingesteld: Watching ${name}`);
 }
 
 function buildStatusEmbed({ guildName }) {
   const now = new Date();
-  const lastUpdateRel = discordTime(Math.floor(now.getTime() / 1000), TimestampStyles.RelativeTime);
-  const lastUpdateAbs = discordTime(Math.floor(now.getTime() / 1000), TimestampStyles.LongDateTime);
 
-  const embed = new EmbedBuilder()
-    .setTitle("🕰️ Phantom Forge Tickets Bot Status")
-    .setColor(0x6c2bd9) // paars accent
+  const dateTime = now.toLocaleString("nl-NL", {
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
+  const footerTime = now.toLocaleTimeString("nl-NL", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return new EmbedBuilder()
+    .setTitle("🕰️ Phantom Forge Verify Bot Status")
+    .setColor(0x6c2bd9)
     .setDescription("**Active:**\n✅ Online")
     .addFields(
       { name: "Uptime", value: `\`${fmtUptime(Date.now() - startedAt)}\``, inline: true },
       { name: "Ping", value: `${Math.round(client.ws.ping)} ms`, inline: true },
-      { name: "Last update", value: `${lastUpdateAbs}`, inline: false },
+      { name: "Last update", value: dateTime, inline: false }
     )
-    .setFooter({ text: `Live updated every second | ${guildName}` });
-
-  return embed;
+    .setFooter({
+      text: `🕯️ Live updated every second | Phantom Forge • vandaag om ${footerTime}`,
+    });
 }
 
-async function upsertStatusMessage() {
-  const channel = await client.channels.fetch(STATUS_CHANNEL_ID);
-  if (!channel || !channel.isTextBased()) {
-    console.error("❌ STATUS_CHANNEL_ID is geen tekstkanaal of onvindbaar.");
-    return;
-  }
-
-  // 1) Probeer bestaand bericht (in geheugen) te editen
-  if (statusMsgId) {
-    try {
-      const msg = await channel.messages.fetch(statusMsgId);
-      await msg.edit({ embeds: [buildStatusEmbed({ guildName: await resolveGuildName() })] });
-      return;
-    } catch {
-      // valt terug op zoeken of nieuw plaatsen
-    }
-  }
-
-  // 2) Zoek laatste bericht van deze bot met onze titel
+async function updateExistingMessage() {
   try {
-    const messages = await channel.messages.fetch({ limit: 50 });
-    const existing = messages.find(
-      (m) =>
-        m.author?.id === client.user.id &&
-        m.embeds?.[0]?.title === "🕰️ Phantom Forge Tickets Bot Status"
-    );
-    if (existing) {
-      statusMsgId = existing.id;
-      await existing.edit({ embeds: [buildStatusEmbed({ guildName: await resolveGuildName() })] });
-      return;
-    }
-  } catch (e) {
-    console.warn("⚠️ Kon eerdere berichten niet fetchen:", e.message);
+    const channel = await client.channels.fetch(STATUS_CHANNEL_ID);
+    const message = await channel.messages.fetch(STATUS_MESSAGE_ID);
+    const embed = buildStatusEmbed({ guildName: await resolveGuildName() });
+    await message.edit({ embeds: [embed] });
+  } catch (err) {
+    console.error("⚠️ Kon statusbericht niet bewerken:", err.message);
   }
-
-  // 3) Plaats nieuw bericht
-  const sent = await channel.send({
-    embeds: [buildStatusEmbed({ guildName: await resolveGuildName() })],
-  });
-  statusMsgId = sent.id;
 }
 
 let updater = null;
@@ -136,8 +116,11 @@ client.once(Events.ClientReady, async () => {
   startedAt = Date.now();
   await setWatchingPresence();
 
-  await upsertStatusMessage();
-  updater = setInterval(upsertStatusMessage, UPDATE_INTERVAL_MS);
+  // Direct eerste update
+  await updateExistingMessage();
+
+  // Elke seconde updaten
+  updater = setInterval(updateExistingMessage, UPDATE_INTERVAL_MS);
 });
 
 client.on(Events.GuildCreate, setWatchingPresence);
@@ -156,7 +139,7 @@ client.login(token);
 const app = express();
 
 app.get("/", (_req, res) => {
-  res.status(200).send("Presence + Status Bot is running.");
+  res.status(200).send("Verify Status Bot is running.");
 });
 
 app.get("/health", (_req, res) => {
