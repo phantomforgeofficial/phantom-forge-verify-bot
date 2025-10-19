@@ -27,7 +27,7 @@ let startedAt = Date.now();
 let statusMessageId = null;
 let isUpdating = false;
 
-/* ------------------ HELPERS ------------------ */
+/* ------------------ Helpers ------------------ */
 function fmtUptime(ms) {
   const s = Math.floor(ms / 1000);
   const h = String(Math.floor(s / 3600)).padStart(2, "0");
@@ -59,7 +59,7 @@ async function setWatchingPresence() {
   console.log(`✅ Presence ingesteld: Watching ${name}`);
 }
 
-/* ------------------ EMBED ------------------ */
+/* ------------------ Embed ------------------ */
 function buildStatusEmbed() {
   const now = new Date();
 
@@ -78,20 +78,20 @@ function buildStatusEmbed() {
   });
 
   return new EmbedBuilder()
-    .setTitle("🕰️ Phantom Forge Verify Bot Status")
+    .setTitle("🕰️ Phantom Forge Verify Bot Status") // klokje emoji
     .setColor(0x6c2bd9)
-    .setDescription("**Active:**\n✅ Online")
+    .setDescription("**Active:**\n✅ Online") // groene check emoji
     .addFields(
-      { name: "Uptime", value: `\`${fmtUptime(Date.now() - startedAt)}\``, inline: true },
-      { name: "Ping", value: `${Math.round(client.ws.ping)} ms`, inline: true },
-      { name: "Last update", value: dateTime, inline: false }
+      { name: "⏱️ Uptime", value: `\`${fmtUptime(Date.now() - startedAt)}\``, inline: true },
+      { name: "📡 Ping", value: `${Math.round(client.ws.ping)} ms`, inline: true },
+      { name: "📅 Last update", value: dateTime, inline: false }
     )
     .setFooter({
       text: `🕯️ Live updated every second | Phantom Forge • vandaag om ${footerTime}`,
     });
 }
 
-/* ------------------ UPDATE LOGIC ------------------ */
+/* ------------------ Update / Create Logic ------------------ */
 async function updateOrCreateStatusMessage() {
   if (isUpdating) return;
   isUpdating = true;
@@ -103,24 +103,25 @@ async function updateOrCreateStatusMessage() {
       return;
     }
 
-    // lees eventueel bestaand id uit data.json
+    // lees lokaal opgeslagen bericht-ID
     if (!statusMessageId && fs.existsSync(DATA_FILE)) {
       const data = await fs.readJson(DATA_FILE).catch(() => ({}));
       statusMessageId = data.statusMessageId || null;
     }
 
+    // probeer bestaand bericht te bewerken
     if (statusMessageId) {
       try {
         const msg = await channel.messages.fetch(statusMessageId);
         await msg.edit({ embeds: [buildStatusEmbed()] });
         return;
-      } catch (err) {
-        console.warn("⚠️ Oud bericht niet gevonden, maak een nieuw aan...");
+      } catch {
+        console.warn("⚠️ Oud bericht niet gevonden, maak nieuw aan...");
         statusMessageId = null;
       }
     }
 
-    // Als er nog geen bericht is, maak één nieuw statusbericht
+    // maak één nieuw bericht en sla ID op
     if (!statusMessageId) {
       const embed = buildStatusEmbed();
       const newMsg = await channel.send({ embeds: [embed] });
@@ -129,13 +130,13 @@ async function updateOrCreateStatusMessage() {
       console.log(`💾 Nieuw statusbericht geplaatst (ID: ${statusMessageId})`);
     }
   } catch (err) {
-    console.error("⚠️ updateOrCreateStatusMessage() fout:", err.message);
+    console.error("⚠️ updateOrCreateStatusMessage fout:", err.message);
   } finally {
     isUpdating = false;
   }
 }
 
-/* ------------------ BOT SETUP ------------------ */
+/* ------------------ Bot Setup ------------------ */
 let interval = null;
 
 client.once(Events.ClientReady, async () => {
@@ -159,7 +160,7 @@ process.on("uncaughtException", console.error);
 
 client.login(token);
 
-/* ------------------ EXPRESS SERVER ------------------ */
+/* ------------------ Webserver voor Render ------------------ */
 const app = express();
 
 app.get("/", (_req, res) => res.status(200).send("Verify Status Bot is running."));
@@ -171,4 +172,4 @@ app.get("/health", (_req, res) =>
   })
 );
 
-app.listen(PORT, () => console.log(`🌐 Webserver luistert op port ${PORT} - /health`));
+app.listen(PORT, () => console.log(`🌐 Webserver luistert op port ${PORT} → /health`));
